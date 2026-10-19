@@ -1,0 +1,18 @@
+[project]
+name = "ayyadmusicbot"
+version = "0.1.0"
+description = "AyyadMusicBot"
+requires-python = ">=3.12,<=3.13"
+dependencies = [
+    "aiohttp",
+    "kurigram",
+    "py-tgcalls",
+    "python-dotenv",
+    "redis[hiredis]",
+    "tgcrypto-pyrofork",
+]
+
+[dependency-groups]
+dev = [
+    "pylint>=4.0.8",
+]

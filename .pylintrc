@@ -1,0 +1,13 @@
+[MAIN]
+ignore=.git,__pycache__,.venv
+load-plugins=pylint_custom_checks
+init-hook='import sys, os; sys.path.insert(0, os.getcwd())'
+
+[MESSAGES CONTROL]
+disable=E0401,E0611,W0718,W2402,W0212,W0621,W0613,W1203,R0903,R0904,R0911,R0912,R0913,R0914,R0915,R0917,R1705,R0205,C0325,C0413,R1735,C3001,W1113,C0114,C0115,C0116,C0103,C0321,R1702,R1721,duplicate-code
+
+[FORMAT]
+max-line-length=120
+
+[VARIABLES]
+dummy-variables-rgx=_|dummy
