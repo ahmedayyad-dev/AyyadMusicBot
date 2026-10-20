@@ -88,6 +88,7 @@ async def start_play(message: Message, query: str) -> None:
             await _set_status(status, 'queue_full', limit=QUEUE_LIMIT)
             return
         await _set_status(status, 'added_to_queue', title=track.title, position=position)
+        await helper.prepare_next(chat_id)
         return
     item = player.QueueItem(track=track, requested_by=message.from_user.id)
     player.set_current(chat_id, item)
@@ -111,6 +112,7 @@ async def start_play(message: Message, query: str) -> None:
         await _set_status(status, 'unavailable')
         return
     await nowplaying.send(chat_id, item, status)
+    await helper.prepare_next(chat_id)
 
 
 async def skip(message: Message) -> None:
@@ -153,7 +155,7 @@ async def stop(message: Message) -> None:
 
 async def show_queue(message: Message) -> None:
     current, upcoming = player.queue_snapshot(message.chat.id)
-    await nowplaying.send_queue(message.chat.id, current, upcoming)
+    await nowplaying.send_queue(message.chat.id, current, upcoming, 0)
 
 
 async def _upload(status: Message, chat_id: int, stream_url: str, track: anghami.Track) -> None:

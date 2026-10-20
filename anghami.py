@@ -1,4 +1,5 @@
 # pylint: disable=C0114
+import base64
 import io
 import json
 import logging
@@ -11,6 +12,7 @@ import aiohttp
 from database import database
 from constants import (
     ANGHAMI_QUALITY,
+    QUEUE_CACHE_TTL,
     RAPIDAPI_HOST,
     RAPIDAPI_KEY,
     SEARCH_CACHE_TTL,
@@ -70,7 +72,9 @@ def track_from_dict(data: dict) -> Track:
         artist=data.get('artist') or 'غير معروف',
         album=data.get('album') or '',
         duration=float(data.get('duration') or 0),
-        cover_id=int(data.get('coverArt') or data.get('AlbumArt') or 0),
+        cover_id=int(
+            data.get('coverArt') or data.get('AlbumArt') or data.get('cover_id') or 0
+        ),
         bitrates=data.get('bitrates') or '',
     )
 
@@ -193,6 +197,76 @@ async def track_info(song_id: str) -> Track:
     track = track_from_dict(payload)
     await database.set(f'anghami:track:{song_id}', json.dumps(track.to_dict()), ex=TRACK_CACHE_TTL)
     return track
+
+
+def _decode_extras(extras: str | None) -> dict:
+    if not extras:
+        return {}
+    try:
+        decoded = json.loads(
+            base64.b64decode(extras + '=' * (-len(extras) % 4)).decode('utf-8')
+        )
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _queue_from_payload(song_id: str, payload: dict) -> list[Track]:
+    tracks_by_id: dict[str, Track] = {}
+    for section in payload.get('sections') or []:
+        for raw in section.get('data') or []:
+            if raw.get('id'):
+                tracks_by_id[str(raw['id'])] = track_from_dict(raw)
+
+    generated = (_decode_extras(payload.get('extras')).get('rec_data') or {}).get(
+        'generated_queue'
+    )
+    if isinstance(generated, str):
+        queue_ids = [item.strip() for item in generated.split(',') if item.strip()]
+    else:
+        queue_ids = []
+    if not queue_ids:
+        queue_ids = [
+            str(item.get('id'))
+            for section in payload.get('sections') or []
+            if section.get('group') == 'similar'
+            for item in section.get('data') or []
+            if item.get('id')
+        ]
+
+    tracks = []
+    seen = {str(song_id)}
+    for track_id in queue_ids:
+        track = tracks_by_id.get(track_id)
+        if track is None or track.id in seen:
+            continue
+        seen.add(track.id)
+        tracks.append(track)
+    return tracks
+
+
+async def queue_tracks(song_id: str) -> list[Track]:
+    log.info('anghami queue - id %s', song_id)
+    raw = await database.get(f'anghami:queue:{song_id}')
+    if raw is not None:
+        try:
+            cached = json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(cached, list):
+                return [track_from_dict(item) for item in cached]
+
+    payload = await _get(f'/songs/{song_id}')
+    if not payload:
+        raise AnghamiNotFound(f'song {song_id} not found')
+    tracks = _queue_from_payload(song_id, payload)
+    await database.set(
+        f'anghami:queue:{song_id}',
+        json.dumps([track.to_dict() for track in tracks]),
+        ex=QUEUE_CACHE_TTL,
+    )
+    return tracks
 
 
 def _url_ttl(url: str) -> int:

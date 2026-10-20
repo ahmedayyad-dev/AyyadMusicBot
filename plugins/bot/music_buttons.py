@@ -13,8 +13,25 @@ ACTION_PERMISSIONS = {'skip': 'skip', 'pause': 'pause', 'resume': 'resume', 'sto
 
 @Client.on_callback_query(filters.regex(r'^mq:'))
 async def music_button(client: Client, query: CallbackQuery) -> None:
-    action = query.data.split(':', 1)[1]
+    parts = query.data.split(':')
+    if len(parts) < 2:
+        await query.answer()
+        return
+    action = parts[1]
     chat_id = query.message.chat.id
+    if action == 'queue':
+        if not await access.ensure_access(query, 'queue'):
+            return
+        current, upcoming = player.queue_snapshot(chat_id)
+        await nowplaying.edit_queue(
+            chat_id,
+            query.message.id,
+            current,
+            upcoming,
+            int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
+        )
+        await query.answer()
+        return
     if action not in ACTION_PERMISSIONS:
         await query.answer()
         return

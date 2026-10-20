@@ -20,6 +20,7 @@ from pyrogram.types import (
 import anghami
 import player
 from bot import bot
+from constants import QUEUE_PAGE_SIZE
 from languages import text
 
 log = logging.getLogger(__name__)
@@ -146,23 +147,99 @@ async def clear(chat_id: int) -> None:
     playback.message_id = None
 
 
-async def send_queue(chat_id: int, current: player.QueueItem | None, upcoming: list) -> None:
+def build_queue(
+    current: player.QueueItem | None,
+    upcoming: list[player.QueueItem],
+    page: int = 0,
+) -> InputRichMessage:
     blocks = []
-    if current is None:
+    pages = max(1, (len(upcoming) + QUEUE_PAGE_SIZE - 1) // QUEUE_PAGE_SIZE)
+    current_page = max(0, min(page, pages - 1))
+    start = current_page * QUEUE_PAGE_SIZE
+    if current is None and not upcoming:
         blocks.append(InputRichBlockParagraph(text=text(None, 'queue_empty')))
     else:
-        blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_now'), size=2))
-        blocks.append(InputRichBlockParagraph(text=track_line(current.track)))
-        if upcoming:
-            blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_next'), size=3))
-            for position, item in enumerate(upcoming, start=1):
-                blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
-        blocks.append(
-            InputRichBlockParagraph(
-                text=text(None, 'queue_count', count=len(upcoming))
+        if current is not None:
+            blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_now'), size=2))
+            blocks.append(InputRichBlockParagraph(text=track_line(current.track)))
+            blocks.append(
+                InputRichBlockParagraph(
+                    text=text(
+                        None,
+                        'queue_source_anghami' if current.autoplay else 'queue_source_user',
+                    )
+                )
             )
+        shown_sources = set()
+        for position, item in enumerate(
+            upcoming[start:start + QUEUE_PAGE_SIZE], start=start + 1
+        ):
+            if item.autoplay not in shown_sources:
+                blocks.append(
+                    InputRichBlockSectionHeading(
+                        text=text(
+                            None,
+                            'queue_anghami_title' if item.autoplay else 'queue_next',
+                        ),
+                        size=3,
+                    )
+                )
+                shown_sources.add(item.autoplay)
+            blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
+        if upcoming:
+            blocks.append(
+                InputRichBlockParagraph(text=text(None, 'queue_count', count=len(upcoming)))
+            )
+        if pages > 1:
+            blocks.append(
+                InputRichBlockParagraph(
+                    text=text(None, 'queue_page', page=current_page + 1, pages=pages)
+                )
+            )
+        buttons = []
+        if current_page > 0:
+            buttons.append(
+                RichMessageButton(
+                    text=text(None, 'btn_queue_back'),
+                    callback_data=f'mq:queue:{current_page - 1}',
+                    style=ButtonStyle.PRIMARY,
+                )
+            )
+        if current_page < pages - 1:
+            buttons.append(
+                RichMessageButton(
+                    text=text(None, 'btn_queue_next'),
+                    callback_data=f'mq:queue:{current_page + 1}',
+                    style=ButtonStyle.PRIMARY,
+                )
+            )
+        if buttons:
+            blocks.append(InputRichBlockButtons(buttons=buttons))
+    return InputRichMessage(blocks=blocks, is_rtl=True)
+
+
+async def send_queue(
+    chat_id: int,
+    current: player.QueueItem | None,
+    upcoming: list[player.QueueItem],
+    page: int = 0,
+) -> None:
+    await bot.send_rich_message(chat_id, build_queue(current, upcoming, page))
+
+
+async def edit_queue(
+    chat_id: int,
+    message_id: int,
+    current: player.QueueItem | None,
+    upcoming: list[player.QueueItem],
+    page: int,
+) -> None:
+    try:
+        await bot.edit_message_text(
+            chat_id, message_id, rich_message=build_queue(current, upcoming, page)
         )
-    await bot.send_rich_message(chat_id, InputRichMessage(blocks=blocks, is_rtl=True))
+    except RPCError as exc:
+        log.warning('failed editing queue in chat %s: %s', chat_id, exc)
 
 
 async def send_download_prompt(status: Message, track: anghami.Track, link: str) -> None:

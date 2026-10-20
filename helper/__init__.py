@@ -151,9 +151,46 @@ async def leave_call(chat_id: int, leave_chat: bool = False) -> None:
     log.info('helper left call - chat %s', chat_id)
 
 
+async def _load_autoplay(chat_id: int) -> None:
+    last = player.last_item(chat_id)
+    if last is None or last.autoplay or player.has_manual(chat_id):
+        return
+    try:
+        tracks = await anghami.queue_tracks(last.track.id)
+    except (anghami.AnghamiError, RedisError) as exc:
+        log.warning('failed loading anghami queue in chat %s: %s', chat_id, exc)
+        return
+    if not tracks or player.last_item(chat_id) is not last or player.has_manual(chat_id):
+        return
+    player.set_autoplay(chat_id, tracks)
+
+
+async def prepare_next(chat_id: int) -> None:
+    next_track = player.peek_next(chat_id)
+    if next_track is None:
+        last = player.last_item(chat_id)
+        if last is not None and not last.autoplay:
+            await _load_autoplay(chat_id)
+            next_track = player.peek_next(chat_id)
+    if next_track is None:
+        return
+    try:
+        await anghami.stream_url(next_track.id)
+    except (anghami.AnghamiError, RedisError) as exc:
+        log.warning('failed prefetching next track in chat %s: %s', chat_id, exc)
+
+
 async def play_next(chat_id: int) -> None:
+    if player.peek_next(chat_id) is None:
+        last = player.last_item(chat_id)
+        if last is not None and not last.autoplay:
+            await _load_autoplay(chat_id)
+            if player.last_item(chat_id) is not last:
+                return
     while True:
         item = player.advance(chat_id)
+        if item is None:
+            item = player.next_autoplay(chat_id)
         if item is None:
             await leave_call(chat_id)
             await nowplaying.clear(chat_id)
@@ -165,6 +202,7 @@ async def play_next(chat_id: int) -> None:
             log.warning('failed playing next track in chat %s: %s', chat_id, exc)
             continue
         await nowplaying.send(chat_id, item)
+        await prepare_next(chat_id)
         return
 
 
