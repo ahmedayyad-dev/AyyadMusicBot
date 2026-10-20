@@ -3,7 +3,9 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from json import JSONDecodeError
 
+from ntgcalls import FFmpegError
 from pyrogram import Client
 from pyrogram.enums import ChatType
 from pyrogram.errors import (
@@ -17,7 +19,7 @@ from pyrogram.errors import (
 )
 from pyrogram.types import ChatJoinResultRequestSent
 from pytgcalls import PyTgCalls, filters
-from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
+from pytgcalls.exceptions import NoActiveGroupCall, NoAudioSourceFound, NotInCallError
 from pytgcalls.types import ChatUpdate, GroupCallConfig, MediaStream, StreamEnded
 from redis.exceptions import RedisError
 
@@ -38,6 +40,10 @@ class HelperJoinError(Exception):
 
 
 class CallUnavailable(Exception):
+    pass
+
+
+class PlayStreamError(Exception):
     pass
 
 
@@ -109,10 +115,23 @@ class AssistantManager:
     async def play_stream(self, chat_id: int, url: str) -> None:
         try:
             await self.helpers[await self.ensure_assistant(chat_id)].play(
-                chat_id, MediaStream(url), config=GroupCallConfig(auto_start=False)
+                chat_id,
+                MediaStream(url, video_flags=MediaStream.Flags.IGNORE),
+                config=GroupCallConfig(auto_start=False),
             )
         except NoActiveGroupCall as exc:
             raise CallUnavailable('no active voice chat') from exc
+        except (
+            FFmpegError,
+            ProcessLookupError,
+            JSONDecodeError,
+            FileNotFoundError,
+            TimeoutError,
+            NoAudioSourceFound,
+            NotInCallError,
+        ) as exc:
+            log.warning('failed to play stream in chat %s: %s', chat_id, exc)
+            raise PlayStreamError(str(exc)) from exc
         await _mark_active(chat_id)
 
     async def pause_call(self, chat_id: int) -> None:
@@ -192,7 +211,13 @@ class AssistantManager:
                 return None
             try:
                 await self.play_stream(chat_id, await anghami.stream_url(item.track.id))
-            except (anghami.AnghamiError, CallUnavailable, HelperJoinError, NoHelperAvailable) as exc:
+            except (
+                anghami.AnghamiError,
+                CallUnavailable,
+                HelperJoinError,
+                NoHelperAvailable,
+                PlayStreamError,
+            ) as exc:
                 log.warning('failed playing next track in chat %s: %s', chat_id, exc)
                 continue
             await nowplaying.send(chat_id, item)

@@ -291,6 +291,9 @@ class AnghamiClient:
         await database.set(f'anghami:url:{song_id}:{quality}', url, ex=_url_ttl(url))
         return url
 
+    async def invalidate_url(self, song_id: str, quality: str = ANGHAMI_QUALITY) -> None:
+        await database.delete(f'anghami:url:{song_id}:{quality}')
+
 
 anghami_client = AnghamiClient()
 
@@ -299,3 +302,4 @@ track_info = anghami_client.track_info
 queue_tracks = anghami_client.queue_tracks
 stream_url = anghami_client.stream_url
 cover_file = anghami_client.cover_file
+invalidate_url = anghami_client.invalidate_url

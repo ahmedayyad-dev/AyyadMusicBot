@@ -97,10 +97,10 @@ async def start_play(message: Message, query: str, lang: str | None = None) -> N
             await helper.prepare_next(chat_id)
             return
         item = player.QueueItem(track=track, requested_by=message.from_user.id)
-        playback.set_current(item)
         try:
             await _set_status(status, 'status_loading', chosen_lang)
             await _play(chat_id, await anghami.stream_url(track.id), status, chosen_lang)
+            playback.set_current(item)
         except helper.NoHelperAvailable:
             player.close(chat_id)
             await _set_status(status, 'no_helper', chosen_lang)
@@ -116,6 +116,11 @@ async def start_play(message: Message, query: str, lang: str | None = None) -> N
         except anghami.AnghamiError:
             player.close(chat_id)
             await _set_status(status, 'unavailable', chosen_lang)
+            return
+        except helper.PlayStreamError:
+            player.close(chat_id)
+            await anghami.invalidate_url(track.id)
+            await _set_status(status, 'load_failed', chosen_lang)
             return
         await nowplaying.send(chat_id, item, status)
         await helper.prepare_next(chat_id)
