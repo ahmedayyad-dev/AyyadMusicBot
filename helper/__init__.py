@@ -151,7 +151,19 @@ async def leave_call(chat_id: int, leave_chat: bool = False) -> None:
     log.info('helper left call - chat %s', chat_id)
 
 
+async def anghami_queue_enabled(chat_id: int) -> bool:
+    return (await database.get(f'{bot.me.id}:group:{chat_id}:anghami_queue')) != 'off'
+
+
+async def set_anghami_queue(chat_id: int, enabled: bool) -> None:
+    await database.set(
+        f'{bot.me.id}:group:{chat_id}:anghami_queue', 'on' if enabled else 'off'
+    )
+
+
 async def _load_autoplay(chat_id: int) -> None:
+    if not await anghami_queue_enabled(chat_id):
+        return
     seed_id = player.last_manual_seed(chat_id)
     if seed_id is None:
         return
@@ -179,7 +191,7 @@ async def prepare_next(chat_id: int) -> None:
         log.warning('failed prefetching next track in chat %s: %s', chat_id, exc)
 
 
-async def play_next(chat_id: int) -> None:
+async def play_next(chat_id: int) -> player.QueueItem | None:
     await _load_autoplay(chat_id)
     while True:
         item = player.advance(chat_id)
@@ -189,7 +201,7 @@ async def play_next(chat_id: int) -> None:
             await leave_call(chat_id)
             await nowplaying.clear(chat_id)
             player.close(chat_id)
-            return
+            return None
         try:
             await play_stream(chat_id, await anghami.stream_url(item.track.id))
         except (anghami.AnghamiError, CallUnavailable, HelperJoinError, NoHelperAvailable) as exc:
@@ -197,7 +209,7 @@ async def play_next(chat_id: int) -> None:
             continue
         await nowplaying.send(chat_id, item)
         await prepare_next(chat_id)
-        return
+        return item
 
 
 async def _on_stream_end(client: Client, update: StreamEnded) -> None:

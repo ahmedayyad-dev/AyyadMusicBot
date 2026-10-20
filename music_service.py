@@ -120,7 +120,13 @@ async def skip(message: Message) -> None:
     if not player.is_playing(chat_id):
         await message.reply(text(None, 'queue_empty'))
         return
-    await helper.play_next(chat_id)
+    item = await helper.play_next(chat_id)
+    if item is None:
+        await message.reply(text(None, 'skip_ended'))
+    else:
+        await message.reply(
+            text(None, 'skip_done_next', track=f'{item.track.title} - {item.track.artist}')
+        )
 
 
 async def pause(message: Message) -> None:

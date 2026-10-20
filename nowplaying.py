@@ -189,6 +189,10 @@ def build_queue(
                         size=3,
                     )
                 )
+                if item.autoplay:
+                    blocks.append(
+                        InputRichBlockParagraph(text=text(None, 'queue_anghami_note'))
+                    )
                 shown_sources.add(item.autoplay)
             blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
         if pages > 1:

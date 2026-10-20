@@ -5,7 +5,9 @@ from pyrogram.errors import RPCError
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import access
+import helper
 import permissions
+import player
 from bot import bot
 from database import database
 from languages import text
@@ -15,40 +17,38 @@ async def panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     async with database.pipeline() as pipe:
         for command in access.COMMANDS:
             pipe.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
-        return InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        text(None, f'command_{command}'),
-                        callback_data='setp',
-                        style=ButtonStyle.DEFAULT,
-                    ),
-                    InlineKeyboardButton(
-                        text=(
-                            f"[{text(None, 'scope_all')}]"
-                            if current == access.SCOPE_ALL
-                            else text(None, 'scope_all')
-                        ),
-                        callback_data=f'setp:{command}:all',
-                        style=ButtonStyle.PRIMARY
-                        if current == access.SCOPE_ALL
-                        else ButtonStyle.DEFAULT,
-                    ),
-                    InlineKeyboardButton(
-                        text=(
-                            f"[{text(None, 'scope_admins')}]"
-                            if current == access.SCOPE_ADMINS
-                            else text(None, 'scope_admins')
-                        ),
-                        callback_data=f'setp:{command}:admins',
-                        style=ButtonStyle.PRIMARY
-                        if current == access.SCOPE_ADMINS
-                        else ButtonStyle.DEFAULT,
-                    ),
-                ]
-                for command, current in zip(access.COMMANDS, await pipe.execute())
-            ]
-        )
+        pipe.get(f'{bot.me.id}:group:{chat_id}:anghami_queue')
+        results = await pipe.execute()
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=(
+                    f"{text(None, f'command_{command}')} "
+                    f"{text(None, 'scope_all' if current == access.SCOPE_ALL else 'scope_admins')}"
+                ),
+                callback_data=(
+                    f"setp:{command}:"
+                    f"{access.SCOPE_ADMINS if current == access.SCOPE_ALL else access.SCOPE_ALL}"
+                ),
+                style=(
+                    ButtonStyle.SUCCESS
+                    if current == access.SCOPE_ALL
+                    else ButtonStyle.DANGER
+                ),
+            )
+        ]
+        for command, current in zip(access.COMMANDS, results[:-1])
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=text(None, 'setting_anghami_queue'),
+                callback_data='toggle:anghami_queue',
+                style=ButtonStyle.SUCCESS if results[-1] != 'off' else ButtonStyle.DANGER,
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
 
 
 @Client.on_message(filters.regex(r'^(اعدادات|/settings)$') & filters.group & filters.text)
@@ -78,6 +78,22 @@ async def set_perm(client: Client, query: CallbackQuery) -> None:
         await query.answer()
         return
     await access.set_command_scope(chat_id, command, scope)
+    await query.answer(text(None, 'settings_saved'))
+    await query.message.edit_text(
+        text(None, 'settings_body'), reply_markup=await panel_keyboard(chat_id)
+    )
+
+
+@Client.on_callback_query(filters.regex(r'^toggle:anghami_queue$'))
+async def toggle_anghami_queue(client: Client, query: CallbackQuery) -> None:
+    chat_id = query.message.chat.id
+    if not await permissions.has_perm(chat_id, query.from_user.id, 'can_manage_video_chats'):
+        await query.answer(text(None, 'settings_admin_only'), show_alert=True)
+        return
+    enabled = await helper.anghami_queue_enabled(chat_id)
+    await helper.set_anghami_queue(chat_id, not enabled)
+    if enabled:
+        player.clear_autoplay(chat_id)
     await query.answer(text(None, 'settings_saved'))
     await query.message.edit_text(
         text(None, 'settings_body'), reply_markup=await panel_keyboard(chat_id)

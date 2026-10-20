@@ -38,8 +38,13 @@ async def music_button(client: Client, query: CallbackQuery) -> None:
     if not await access.ensure_access(query, ACTION_PERMISSIONS[action]):
         return
     if action == 'skip':
-        await query.answer(text(None, 'skip_done'))
-        await helper.play_next(chat_id)
+        item = await helper.play_next(chat_id)
+        if item is None:
+            await query.answer(text(None, 'skip_ended'), show_alert=True)
+        else:
+            await query.answer(
+                text(None, 'skip_done_next', track=f'{item.track.title} - {item.track.artist}')
+            )
     elif action == 'pause':
         await helper.pause_call(chat_id)
         player.set_paused(chat_id, True)

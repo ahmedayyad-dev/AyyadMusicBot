@@ -105,6 +105,14 @@ def last_manual_seed(chat_id: int) -> str | None:
     return None
 
 
+def clear_autoplay(chat_id: int) -> None:
+    playback = playbacks.get(chat_id)
+    if playback is None:
+        return
+    playback.autoplay.clear()
+    playback.autoplay_seed = None
+
+
 def next_autoplay(chat_id: int) -> QueueItem | None:
     playback = playbacks.get(chat_id)
     if playback is None or not playback.autoplay:
