@@ -5,7 +5,7 @@ from pyrogram.types import Message
 from core import music
 from core.config import bot
 from languages import get_language
-from plugins.bot.commands_menu import build_private_menu
+from plugins.bot.commands_menu import build_private_menu, fetch_stats
 
 HANDLED_TOKENS = {'تشغيل', 'شغل', 'تحميل', '/play', '/download', 'ijro', 'yuklash'}
 
@@ -22,8 +22,8 @@ async def private_handler(client: Client, message: Message) -> None:
         if payload.startswith('dl_'):
             await music.open_download(message.chat.id, payload[3:])
             return
-        await bot.send_rich_message(message.chat.id, build_private_menu(lang))
+        await bot.send_rich_message(message.chat.id, build_private_menu(lang, await fetch_stats()))
         return
     if first.startswith('/') or first in HANDLED_TOKENS:
         return
-    await bot.send_rich_message(message.chat.id, build_private_menu(lang))
+    await bot.send_rich_message(message.chat.id, build_private_menu(lang, await fetch_stats()))

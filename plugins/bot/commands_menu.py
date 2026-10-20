@@ -4,15 +4,19 @@ from pyrogram.enums import ButtonStyle
 from pyrogram.types import (
     CallbackQuery,
     InputRichBlockButtons,
+    InputRichBlockDivider,
     InputRichBlockList,
     InputRichBlockListItem,
     InputRichBlockParagraph,
     InputRichBlockSectionHeading,
+    InputRichBlockTable,
     InputRichMessage,
+    RichBlockTableCell,
     RichMessageButton,
 )
 
-from core.config import SOURCE_URL, bot
+from core import helper
+from core.config import SOURCE_URL, bot, database
 from languages import LANGUAGES, get_language, set_language, text
 
 
@@ -35,6 +39,15 @@ def _commands_list(lang: str = 'ar') -> InputRichBlockList:
     )
 
 
+async def fetch_stats() -> tuple[int, int, int, int]:
+    async with database.pipeline() as pipe:
+        pipe.scard(f'{bot.me.id}:private')
+        pipe.scard(f'{bot.me.id}:group')
+        pipe.scard(f'{bot.me.id}:channel')
+        counts = await pipe.execute()
+    return counts[0], counts[1], counts[2], len(helper.chat_owner)
+
+
 def build_welcome(lang: str = 'ar') -> InputRichMessage:
     return InputRichMessage(
         blocks=[
@@ -47,12 +60,36 @@ def build_welcome(lang: str = 'ar') -> InputRichMessage:
     )
 
 
-def build_private_menu(lang: str = 'ar') -> InputRichMessage:
+def build_private_menu(lang: str, stats: tuple[int, int, int, int]) -> InputRichMessage:
     return InputRichMessage(
         blocks=[
             InputRichBlockSectionHeading(text=text(lang, 'welcome_title'), size=2),
             InputRichBlockParagraph(text=text(lang, 'private_body')),
             _commands_list(lang),
+            InputRichBlockDivider(),
+            InputRichBlockSectionHeading(text=text(lang, 'stats_title'), size=2),
+            InputRichBlockTable(
+                cells=[
+                    [
+                        RichBlockTableCell(text=text(lang, 'stats_private'), is_header=True),
+                        RichBlockTableCell(text=text(lang, 'stats_groups'), is_header=True),
+                    ],
+                    [
+                        RichBlockTableCell(text=str(stats[0])),
+                        RichBlockTableCell(text=str(stats[1])),
+                    ],
+                    [
+                        RichBlockTableCell(text=text(lang, 'stats_channels'), is_header=True),
+                        RichBlockTableCell(text=text(lang, 'stats_calls'), is_header=True),
+                    ],
+                    [
+                        RichBlockTableCell(text=str(stats[2])),
+                        RichBlockTableCell(text=str(stats[3])),
+                    ],
+                ],
+                is_bordered=True,
+                is_striped=True,
+            ),
             InputRichBlockButtons(
                 buttons=[
                     RichMessageButton(
@@ -121,7 +158,7 @@ async def language_callback(client: Client, query: CallbackQuery) -> None:
         await bot.edit_message_text(
             query.message.chat.id,
             query.message.id,
-            rich_message=build_private_menu(current_lang),
+            rich_message=build_private_menu(current_lang, await fetch_stats()),
         )
         await query.answer()
         return
@@ -135,7 +172,7 @@ async def language_callback(client: Client, query: CallbackQuery) -> None:
             await bot.edit_message_text(
                 query.message.chat.id,
                 query.message.id,
-                rich_message=build_private_menu(target_lang),
+                rich_message=build_private_menu(target_lang, await fetch_stats()),
             )
             return
     await query.answer()
