@@ -74,7 +74,7 @@ async def ensure_access(update: Message | CallbackQuery, command: str) -> bool:
         pipe.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
         pipe.hget(f'{bot.me.id}:group:{chat_id}:admins', str(user_id))
         scope, raw = await pipe.execute()
-    if scope != CommandScope.ADMINS:
+    if scope == CommandScope.ALL:
         return True
     try:
         if raw and json.loads(raw).get('can_manage_video_chats'):

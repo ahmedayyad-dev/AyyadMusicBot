@@ -14,7 +14,7 @@ from core.permissions import (
     require_admin,
     set_command_scope,
 )
-from languages import DEFAULT_LANGUAGE, LANGUAGES, set_language, text
+from languages import DEFAULT_LANGUAGE, LANGUAGES, get_language, set_language, text
 
 
 async def panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
@@ -127,8 +127,10 @@ async def toggle_group_lang(client: Client, query: CallbackQuery, lang: str) -> 
 
 
 @Client.on_message(filters.regex(r'^(تحديث|/reload|/refresh|yangilash)$') & filters.group)
-@require_admin()
-async def reload_admins_command(client: Client, message: Message, lang: str) -> None:
+async def reload_admins_command(client: Client, message: Message) -> None:
+    lang = await get_language(
+        message.chat.id, message.from_user.id if message.from_user else None
+    )
     try:
         await refresh_admins(message.chat.id)
     except RPCError:
