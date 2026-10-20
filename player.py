@@ -1,4 +1,4 @@
-# pylint: disable=C0114
+# pylint: disable=C0114,R0902
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -16,6 +16,7 @@ class QueueItem:
 class ChatPlayback:
     queue: deque[QueueItem] = field(default_factory=deque)
     autoplay: deque[Track] = field(default_factory=deque)
+    autoplay_seed: str | None = None
     current: QueueItem | None = None
     last_item: QueueItem | None = None
     paused: bool = False
@@ -46,15 +47,20 @@ def enqueue(chat_id: int, track: Track, requested_by: int, limit: int) -> tuple[
     if len(playback.queue) >= limit:
         return False, len(playback.queue)
     playback.autoplay.clear()
+    playback.autoplay_seed = None
     playback.queue.append(QueueItem(track=track, requested_by=requested_by))
     return True, len(playback.queue)
 
 
 def set_current(chat_id: int, item: QueueItem | None) -> None:
     playback = get_playback(chat_id)
+    if item is None or item.autoplay or (
+        playback.autoplay_seed is not None and item.track.id != playback.autoplay_seed
+    ):
+        playback.autoplay.clear()
+        playback.autoplay_seed = None
     playback.current = item
     playback.last_item = item
-    playback.autoplay.clear()
     playback.paused = False
 
 
@@ -65,22 +71,38 @@ def advance(chat_id: int) -> QueueItem | None:
     if playback.queue:
         playback.current = playback.queue.popleft()
         playback.last_item = playback.current
-        playback.autoplay.clear()
+        if playback.autoplay_seed is not None and playback.current.track.id != playback.autoplay_seed:
+            playback.autoplay.clear()
+            playback.autoplay_seed = None
     else:
         playback.current = None
     playback.paused = False
     return playback.current
 
 
-def set_autoplay(chat_id: int, tracks: list[Track]) -> None:
+def set_autoplay(chat_id: int, tracks: list[Track], seed_id: str | None = None) -> None:
     playback = get_playback(chat_id)
+    if seed_id is None:
+        seed_id = last_manual_seed(chat_id)
     playback.autoplay.clear()
-    seen = {playback.last_item.track.id} if playback.last_item else set()
+    playback.autoplay_seed = seed_id
+    seen = {seed_id} if seed_id else set()
     for track in tracks:
         if track.id in seen:
             continue
         seen.add(track.id)
         playback.autoplay.append(track)
+
+
+def last_manual_seed(chat_id: int) -> str | None:
+    playback = playbacks.get(chat_id)
+    if playback is None:
+        return None
+    if playback.queue:
+        return playback.queue[-1].track.id
+    if playback.current is not None and not playback.current.autoplay:
+        return playback.current.track.id
+    return None
 
 
 def next_autoplay(chat_id: int) -> QueueItem | None:

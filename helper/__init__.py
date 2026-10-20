@@ -152,26 +152,25 @@ async def leave_call(chat_id: int, leave_chat: bool = False) -> None:
 
 
 async def _load_autoplay(chat_id: int) -> None:
-    last = player.last_item(chat_id)
-    if last is None or last.autoplay or player.has_manual(chat_id):
+    seed_id = player.last_manual_seed(chat_id)
+    if seed_id is None:
+        return
+    playback = player.get_playback(chat_id)
+    if playback.autoplay_seed == seed_id and playback.autoplay:
         return
     try:
-        tracks = await anghami.queue_tracks(last.track.id)
+        tracks = await anghami.queue_tracks(seed_id)
     except (anghami.AnghamiError, RedisError) as exc:
         log.warning('failed loading anghami queue in chat %s: %s', chat_id, exc)
         return
-    if not tracks or player.last_item(chat_id) is not last or player.has_manual(chat_id):
+    if not tracks or player.last_manual_seed(chat_id) != seed_id:
         return
-    player.set_autoplay(chat_id, tracks)
+    player.set_autoplay(chat_id, tracks, seed_id)
 
 
 async def prepare_next(chat_id: int) -> None:
+    await _load_autoplay(chat_id)
     next_track = player.peek_next(chat_id)
-    if next_track is None:
-        last = player.last_item(chat_id)
-        if last is not None and not last.autoplay:
-            await _load_autoplay(chat_id)
-            next_track = player.peek_next(chat_id)
     if next_track is None:
         return
     try:
@@ -181,12 +180,7 @@ async def prepare_next(chat_id: int) -> None:
 
 
 async def play_next(chat_id: int) -> None:
-    if player.peek_next(chat_id) is None:
-        last = player.last_item(chat_id)
-        if last is not None and not last.autoplay:
-            await _load_autoplay(chat_id)
-            if player.last_item(chat_id) is not last:
-                return
+    await _load_autoplay(chat_id)
     while True:
         item = player.advance(chat_id)
         if item is None:

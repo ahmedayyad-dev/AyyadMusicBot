@@ -159,6 +159,11 @@ def build_queue(
     if current is None and not upcoming:
         blocks.append(InputRichBlockParagraph(text=text(None, 'queue_empty')))
     else:
+        blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_title'), size=1))
+        if upcoming:
+            blocks.append(
+                InputRichBlockParagraph(text=text(None, 'queue_count', count=len(upcoming)))
+            )
         if current is not None:
             blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_now'), size=2))
             blocks.append(InputRichBlockParagraph(text=track_line(current.track)))
@@ -186,10 +191,6 @@ def build_queue(
                 )
                 shown_sources.add(item.autoplay)
             blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
-        if upcoming:
-            blocks.append(
-                InputRichBlockParagraph(text=text(None, 'queue_count', count=len(upcoming)))
-            )
         if pages > 1:
             blocks.append(
                 InputRichBlockParagraph(
