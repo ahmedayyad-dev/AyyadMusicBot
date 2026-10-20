@@ -5,7 +5,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.types import ChatMemberUpdated
 
-from helper import mirror_bot_privileges
+from core.helper import mirror_bot_privileges
 
 log = logging.getLogger(__name__)
 

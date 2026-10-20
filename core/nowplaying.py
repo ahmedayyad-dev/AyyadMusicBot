@@ -17,11 +17,9 @@ from pyrogram.types import (
     RichMessageButton,
 )
 
-import anghami
-import player
-from bot import bot
-from constants import QUEUE_PAGE_SIZE
-from languages import text
+from core import anghami, player
+from core.config import QUEUE_PAGE_SIZE, bot
+from languages import get_language, text
 
 log = logging.getLogger(__name__)
 
@@ -30,17 +28,17 @@ def track_line(track: anghami.Track) -> str:
     return f'{track.title} - {track.artist}'
 
 
-def _buttons(chat_id: int) -> InputRichBlockButtons:
+def _buttons(chat_id: int, lang: str = 'ar') -> InputRichBlockButtons:
     playback = player.playbacks.get(chat_id)
     items = [
         RichMessageButton(
-            text=text(None, 'btn_skip'), callback_data='mq:skip', style=ButtonStyle.PRIMARY
+            text=text(lang, 'action_skip'), callback_data='mq:skip', style=ButtonStyle.PRIMARY
         )
     ]
     if playback is not None and playback.paused:
         items.append(
             RichMessageButton(
-                text=text(None, 'btn_resume'),
+                text=text(lang, 'action_resume'),
                 callback_data='mq:resume',
                 style=ButtonStyle.SUCCESS,
             )
@@ -48,14 +46,14 @@ def _buttons(chat_id: int) -> InputRichBlockButtons:
     else:
         items.append(
             RichMessageButton(
-                text=text(None, 'btn_pause'),
+                text=text(lang, 'action_pause'),
                 callback_data='mq:pause',
                 style=ButtonStyle.PRIMARY,
             )
         )
     items.append(
         RichMessageButton(
-            text=text(None, 'btn_stop'), callback_data='mq:stop', style=ButtonStyle.DANGER
+            text=text(lang, 'action_stop'), callback_data='mq:stop', style=ButtonStyle.DANGER
         )
     )
     return InputRichBlockButtons(buttons=items)
@@ -68,24 +66,29 @@ async def _photo(cover_id: int) -> InputRichBlockPhoto | None:
     return InputRichBlockPhoto(photo=InputMediaPhoto(media=file))
 
 
-async def build_now_playing(chat_id: int, item: player.QueueItem) -> InputRichMessage:
+async def _build_now_playing(
+    chat_id: int, item: player.QueueItem, lang: str | None = None
+) -> InputRichMessage:
+    chosen_lang = lang if lang is not None else await get_language(chat_id)
     track = item.track
     blocks = []
     photo = await _photo(track.cover_id)
     if photo is not None:
         blocks.append(photo)
-    blocks.append(InputRichBlockSectionHeading(text=text(None, 'now_playing_title'), size=1))
+    blocks.append(InputRichBlockSectionHeading(text=text(chosen_lang, 'now_playing_title'), size=1))
     blocks.append(InputRichBlockParagraph(text=track_line(track)))
     blocks.append(
         InputRichBlockParagraph(
-            text=text(None, 'duration_line', duration=anghami.format_duration(track.duration))
+            text=text(chosen_lang, 'duration_line', duration=anghami.format_duration(track.duration))
         )
     )
-    blocks.append(_buttons(chat_id))
-    return InputRichMessage(blocks=blocks, is_rtl=True)
+    blocks.append(_buttons(chat_id, chosen_lang))
+    return InputRichMessage(blocks=blocks, is_rtl=(chosen_lang == 'ar'))
 
 
-async def build_audio(track: anghami.Track, stream_url: str) -> InputRichMessage:
+async def build_audio(
+    track: anghami.Track, stream_url: str, lang: str = 'ar'
+) -> InputRichMessage:
     blocks = []
     photo = await _photo(track.cover_id)
     if photo is not None:
@@ -101,14 +104,14 @@ async def build_audio(track: anghami.Track, stream_url: str) -> InputRichMessage
         )
     )
     blocks.append(InputRichBlockParagraph(text=track_line(track)))
-    return InputRichMessage(blocks=blocks, is_rtl=True)
+    return InputRichMessage(blocks=blocks, is_rtl=(lang == 'ar'))
 
 
 async def send(chat_id: int, item: player.QueueItem, status: Message | None = None) -> None:
     if status is not None:
         try:
             await bot.edit_message_text(
-                chat_id, status.id, rich_message=await build_now_playing(chat_id, item)
+                chat_id, status.id, rich_message=await _build_now_playing(chat_id, item)
             )
             player.set_message(chat_id, status.id)
             return
@@ -117,7 +120,7 @@ async def send(chat_id: int, item: player.QueueItem, status: Message | None = No
             with suppress(RPCError):
                 await status.delete()
     await clear(chat_id)
-    sent = await bot.send_rich_message(chat_id, await build_now_playing(chat_id, item))
+    sent = await bot.send_rich_message(chat_id, await _build_now_playing(chat_id, item))
     if sent is not None:
         player.set_message(chat_id, sent.id)
 
@@ -130,7 +133,7 @@ async def refresh(chat_id: int) -> None:
         await bot.edit_message_text(
             chat_id,
             playback.message_id,
-            rich_message=await build_now_playing(chat_id, playback.current),
+            rich_message=await _build_now_playing(chat_id, playback.current),
         )
     except RPCError as exc:
         log.warning('failed refreshing now playing in chat %s: %s', chat_id, exc)
@@ -147,30 +150,31 @@ async def clear(chat_id: int) -> None:
     playback.message_id = None
 
 
-def build_queue(
+def _build_queue(
     current: player.QueueItem | None,
     upcoming: list[player.QueueItem],
     page: int = 0,
+    lang: str = 'ar',
 ) -> InputRichMessage:
     blocks = []
     pages = max(1, (len(upcoming) + QUEUE_PAGE_SIZE - 1) // QUEUE_PAGE_SIZE)
     current_page = max(0, min(page, pages - 1))
     start = current_page * QUEUE_PAGE_SIZE
     if current is None and not upcoming:
-        blocks.append(InputRichBlockParagraph(text=text(None, 'queue_empty')))
+        blocks.append(InputRichBlockParagraph(text=text(lang, 'queue_empty')))
     else:
-        blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_title'), size=1))
+        blocks.append(InputRichBlockSectionHeading(text=text(lang, 'queue_title'), size=1))
         if upcoming:
             blocks.append(
-                InputRichBlockParagraph(text=text(None, 'queue_count', count=len(upcoming)))
+                InputRichBlockParagraph(text=text(lang, 'queue_count', count=len(upcoming)))
             )
         if current is not None:
-            blocks.append(InputRichBlockSectionHeading(text=text(None, 'queue_now'), size=2))
+            blocks.append(InputRichBlockSectionHeading(text=text(lang, 'queue_now'), size=2))
             blocks.append(InputRichBlockParagraph(text=track_line(current.track)))
             blocks.append(
                 InputRichBlockParagraph(
                     text=text(
-                        None,
+                        lang,
                         'queue_source_anghami' if current.autoplay else 'queue_source_user',
                     )
                 )
@@ -183,7 +187,7 @@ def build_queue(
                 blocks.append(
                     InputRichBlockSectionHeading(
                         text=text(
-                            None,
+                            lang,
                             'queue_anghami_title' if item.autoplay else 'queue_next',
                         ),
                         size=3,
@@ -191,21 +195,21 @@ def build_queue(
                 )
                 if item.autoplay:
                     blocks.append(
-                        InputRichBlockParagraph(text=text(None, 'queue_anghami_note'))
+                        InputRichBlockParagraph(text=text(lang, 'queue_anghami_note'))
                     )
                 shown_sources.add(item.autoplay)
             blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
         if pages > 1:
             blocks.append(
                 InputRichBlockParagraph(
-                    text=text(None, 'queue_page', page=current_page + 1, pages=pages)
+                    text=text(lang, 'queue_page', page=current_page + 1, pages=pages)
                 )
             )
         buttons = []
         if current_page > 0:
             buttons.append(
                 RichMessageButton(
-                    text=text(None, 'btn_queue_back'),
+                    text=text(lang, 'action_back'),
                     callback_data=f'mq:queue:{current_page - 1}',
                     style=ButtonStyle.PRIMARY,
                 )
@@ -213,14 +217,14 @@ def build_queue(
         if current_page < pages - 1:
             buttons.append(
                 RichMessageButton(
-                    text=text(None, 'btn_queue_next'),
+                    text=text(lang, 'action_next'),
                     callback_data=f'mq:queue:{current_page + 1}',
                     style=ButtonStyle.PRIMARY,
                 )
             )
         if buttons:
             blocks.append(InputRichBlockButtons(buttons=buttons))
-    return InputRichMessage(blocks=blocks, is_rtl=True)
+    return InputRichMessage(blocks=blocks, is_rtl=(lang == 'ar'))
 
 
 async def send_queue(
@@ -228,8 +232,17 @@ async def send_queue(
     current: player.QueueItem | None,
     upcoming: list[player.QueueItem],
     page: int = 0,
+    lang: str | None = None,
 ) -> None:
-    await bot.send_rich_message(chat_id, build_queue(current, upcoming, page))
+    await bot.send_rich_message(
+        chat_id,
+        _build_queue(
+            current,
+            upcoming,
+            page,
+            lang if lang is not None else await get_language(chat_id),
+        ),
+    )
 
 
 async def edit_queue(
@@ -241,30 +254,33 @@ async def edit_queue(
 ) -> None:
     try:
         await bot.edit_message_text(
-            chat_id, message_id, rich_message=build_queue(current, upcoming, page)
+            chat_id,
+            message_id,
+            rich_message=_build_queue(current, upcoming, page, await get_language(chat_id)),
         )
     except RPCError as exc:
         log.warning('failed editing queue in chat %s: %s', chat_id, exc)
 
 
 async def send_download_prompt(status: Message, track: anghami.Track, link: str) -> None:
+    lang = await get_language(status.chat.id)
     blocks = []
     photo = await _photo(track.cover_id)
     if photo is not None:
         blocks.append(photo)
-    blocks.append(InputRichBlockSectionHeading(text=text(None, 'download_title'), size=1))
+    blocks.append(InputRichBlockSectionHeading(text=text(lang, 'download_title'), size=1))
     blocks.append(
         InputRichBlockParagraph(
-            text=text(None, 'download_found', title=track.title, artist=track.artist)
+            text=text(lang, 'download_found', title=track.title, artist=track.artist)
         )
     )
-    blocks.append(InputRichBlockParagraph(text=text(None, 'download_redirect')))
+    blocks.append(InputRichBlockParagraph(text=text(lang, 'download_redirect')))
     blocks.append(
         InputRichBlockButtons(
-            buttons=[RichMessageButton(text=text(None, 'download_open_private'), url=link)]
+            buttons=[RichMessageButton(text=text(lang, 'download_open_private'), url=link)]
         )
     )
-    prompt = InputRichMessage(blocks=blocks, is_rtl=True)
+    prompt = InputRichMessage(blocks=blocks, is_rtl=(lang == 'ar'))
     try:
         await bot.edit_message_text(status.chat.id, status.id, rich_message=prompt)
     except RPCError as exc:

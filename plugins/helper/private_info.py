@@ -4,7 +4,8 @@ import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from bot import bot
+from core.config import bot
+from languages import get_language, text
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,5 @@ async def helper_private_info(client: Client, message: Message) -> None:
         return
     log.info('helper private message - from %s', message.from_user.id)
     await message.reply(
-        f'الحساب ده مساعد تابع لبوت @{bot.me.username}\n\n'
-        'بستخدمه لتشغيل الأغاني جوه المكالمات الصوتية في الجروبات'
+        text(await get_language(message.chat.id), 'helper_private_desc', bot_username=bot.me.username)
     )

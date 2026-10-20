@@ -8,7 +8,11 @@ import threading
 from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
 
 _LOG_QUEUE = queue.Queue()
-_STATE = {'listener': None}
+class _LoggingState:
+    listener: QueueListener | None = None
+
+
+_state = _LoggingState()
 
 
 def setup_logging() -> None:
@@ -25,10 +29,10 @@ def setup_logging() -> None:
     file_handler.setFormatter(formatter)
     console_handler = logging.StreamHandler(stream=sys.stdout)
     console_handler.setFormatter(formatter)
-    _STATE['listener'] = QueueListener(
+    _state.listener = QueueListener(
         _LOG_QUEUE, file_handler, console_handler, respect_handler_level=True
     )
-    _STATE['listener'].start()
+    _state.listener.start()
     queue_handler = QueueHandler(_LOG_QUEUE)
     queue_handler.setFormatter(logging.Formatter('%(message)s'))
     logging.basicConfig(
@@ -55,9 +59,8 @@ def _handle_thread_exception(args) -> None:
 
 
 def _cleanup() -> None:
-    listener = _STATE['listener']
-    if listener is not None:
-        listener.stop()
+    if _state.listener is not None:
+        _state.listener.stop()
 
 
 sys.excepthook = _handle_unhandled_exception

@@ -5,10 +5,9 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatMemberStatus, ChatType
 from pyrogram.types import ChatMemberUpdated, Message
 
-from bot import bot
-from database import database
-from helper import leave_call
-from permissions import refresh_admins
+from core.config import bot, database
+from core.helper import leave_call
+from core.permissions import refresh_admins
 from plugins.bot.commands_menu import build_welcome
 
 log = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
 [MAIN]
 ignore=.git,__pycache__,.venv
-load-plugins=pylint_custom_checks
+load-plugins=core.pylint_checks
 init-hook='import sys, os; sys.path.insert(0, os.getcwd())'
 
 [MESSAGES CONTROL]

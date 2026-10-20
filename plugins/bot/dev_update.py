@@ -9,8 +9,7 @@ from pyrogram import Client, filters
 from pyrogram.errors import RPCError
 from pyrogram.types import InputRichMessage, Message
 
-from bot import bot
-from constants import BOT_VERSION, DEV_ADMINS
+from core.config import BOT_VERSION, DEV_ADMINS, bot
 
 log = logging.getLogger(__name__)
 

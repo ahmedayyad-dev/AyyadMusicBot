@@ -2,77 +2,69 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-import access
-import music_service
-from languages import text
+from core import music
+from core.permissions import require_access
+from languages import get_language, text
 
 
-@Client.on_message(filters.regex(r'^(تشغيل|شغل|/play)(\s|$)') & filters.text & filters.group)
-async def play_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'play'):
-        return
+@Client.on_message(filters.regex(r'^(تشغيل|شغل|/play|ijro)(\s|$)') & filters.group)
+@require_access('play')
+async def play_handler(client: Client, message: Message, lang: str) -> None:
     parts = message.text.split(maxsplit=1)
     if len(parts) > 1:
-        await music_service.start_play(message, parts[1])
+        await music.start_play(message, parts[1], lang)
         return
-    await message.reply(text(None, 'play_usage'))
+    await message.reply(text(lang, 'play_usage'))
 
 
-@Client.on_message(filters.regex(r'^(تشغيل|شغل|/play)(\s|$)') & filters.text & filters.private)
+@Client.on_message(filters.regex(r'^(تشغيل|شغل|/play|ijro)(\s|$)') & filters.private)
 async def play_private_handler(client: Client, message: Message) -> None:
-    await message.reply(text(None, 'play_in_group_only'))
+    await message.reply(text(await get_language(message.chat.id), 'play_in_group_only'))
 
 
 @Client.on_message(
-    filters.regex(r'^https?://(?:play\.)?anghami\.com/song/\d+') & filters.text & filters.group
+    filters.regex(r'^https?://(?:play\.)?anghami\.com/song/\d+') & filters.group
 )
-async def play_link_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'play'):
-        return
-    await music_service.start_play(message, message.text)
+@require_access('play')
+async def play_link_handler(client: Client, message: Message, lang: str) -> None:
+    await music.start_play(message, message.text, lang)
 
 
-@Client.on_message(filters.regex(r'^(تحميل|/download)(\s|$)') & filters.text & ~filters.via_bot)
-async def download_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'download'):
-        return
+@Client.on_message(filters.regex(r'^(تحميل|/download|yuklash)(\s|$)') & ~filters.via_bot)
+@require_access('download')
+async def download_handler(client: Client, message: Message, lang: str) -> None:
     parts = message.text.split(maxsplit=1)
     if len(parts) > 1:
-        await music_service.handle_download(message, parts[1])
+        await music.handle_download(message, parts[1], lang)
         return
-    await message.reply(text(None, 'download_usage'))
+    await message.reply(text(lang, 'download_usage'))
 
 
-@Client.on_message(filters.regex(r'^(الطابور|/queue)$') & filters.text & filters.group)
-async def queue_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'queue'):
-        return
-    await music_service.show_queue(message)
+@Client.on_message(filters.regex(r'^(الطابور|طابور|/queue|navbat)$') & filters.group)
+@require_access('queue')
+async def queue_handler(client: Client, message: Message, lang: str) -> None:
+    await music.show_queue(message, lang)
 
 
-@Client.on_message(filters.regex(r'^(تخطي|/skip)$') & filters.text & filters.group)
-async def skip_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'skip'):
-        return
-    await music_service.skip(message)
+@Client.on_message(filters.regex(r'^(تخطي|/skip|otkaz|o\'tkaz)$') & filters.group)
+@require_access('skip')
+async def skip_handler(client: Client, message: Message, lang: str) -> None:
+    await music.skip(message, lang)
 
 
-@Client.on_message(filters.regex(r'^(ايقاف|/pause)$') & filters.text & filters.group)
-async def pause_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'pause'):
-        return
-    await music_service.pause(message)
+@Client.on_message(filters.regex(r'^(ايقاف|/pause|pauza)$') & filters.group)
+@require_access('pause')
+async def pause_handler(client: Client, message: Message, lang: str) -> None:
+    await music.pause(message, lang)
 
 
-@Client.on_message(filters.regex(r'^(استئناف|/resume)$') & filters.text & filters.group)
-async def resume_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'resume'):
-        return
-    await music_service.resume(message)
+@Client.on_message(filters.regex(r'^(استئناف|/resume|davom)$') & filters.group)
+@require_access('resume')
+async def resume_handler(client: Client, message: Message, lang: str) -> None:
+    await music.resume(message, lang)
 
 
-@Client.on_message(filters.regex(r'^(انهاء|/end|/stop)$') & filters.text & filters.group)
-async def stop_handler(client: Client, message: Message) -> None:
-    if not await access.ensure_access(message, 'stop'):
-        return
-    await music_service.stop(message)
+@Client.on_message(filters.regex(r'^(انهاء|/end|/stop|to\'xtat|toxtat)$') & filters.group)
+@require_access('stop')
+async def stop_handler(client: Client, message: Message, lang: str) -> None:
+    await music.stop(message, lang)

@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Final
 
 from dotenv import load_dotenv
+from pyrogram import Client
+from redis import asyncio as aioredis
+from redis.asyncio.connection import ConnectionPool
 
 load_dotenv()
 
@@ -37,3 +40,27 @@ QUEUE_LIMIT: Final[int] = 50
 QUEUE_PAGE_SIZE: Final[int] = 10
 DOWNLOAD_TOKEN_TTL: Final[int] = 30 * 60
 SOURCE_URL: Final[str] = 'https://github.com/ahmedayyad-dev/AyyadMusicBot'
+
+_pool = ConnectionPool.from_url(
+    'redis://localhost:6379',
+    decode_responses=True,
+    socket_timeout=5,
+    socket_connect_timeout=5,
+    health_check_interval=30,
+    retry_on_timeout=True,
+    max_connections=200,
+)
+
+database = aioredis.Redis(connection_pool=_pool)
+
+bot = Client(
+    'bot',
+    API_ID,
+    API_HASH,
+    bot_token=TOKEN,
+    fetch_replies=False,
+    fetch_topics=False,
+    fetch_stories=False,
+    fetch_stickers=False,
+    plugins=dict(root='plugins/bot'),
+)

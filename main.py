@@ -6,9 +6,9 @@ import signal
 
 from pytgcalls import idle
 
-from bot import bot
-from helper import start_helpers
-from logger import setup_logging
+from core.config import bot
+from core.helper import start_helpers
+from core.logger import setup_logging
 from plugins.bot.dev_update import notify_startup
 
 log = logging.getLogger(__name__)

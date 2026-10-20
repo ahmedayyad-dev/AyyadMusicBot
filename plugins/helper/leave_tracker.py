@@ -6,7 +6,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.types import ChatMemberUpdated
 
-from helper import chat_owner
+from core.helper import chat_owner
 
 log = logging.getLogger(__name__)
 
