@@ -70,50 +70,98 @@ async def ensure_access(update: Message | CallbackQuery, command: str) -> bool:
     chat_id, user_id = _target(update)
     if user_id in DEV_ADMINS.values():
         return True
-    async with database.pipeline() as pipe:
-        pipe.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
-        pipe.hget(f'{bot.me.id}:group:{chat_id}:admins', str(user_id))
-        scope, raw = await pipe.execute()
+    scope = await database.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
     if scope == CommandScope.ALL:
         return True
-    try:
-        if raw and json.loads(raw).get('can_manage_video_chats'):
-            return True
-    except json.JSONDecodeError:
-        pass
+    raw = await database.hget(f'{bot.me.id}:group:{chat_id}:admins', str(user_id))
+    if raw is not None:
+        try:
+            if json.loads(raw).get('can_manage_video_chats'):
+                return True
+        except json.JSONDecodeError:
+            pass
+    else:
+        try:
+            if await _has_perm(chat_id, user_id, 'can_manage_video_chats'):
+                return True
+        except Exception:
+            pass
     await _deny(update)
     return False
 
 
 async def refresh_admins(chat_id: int) -> None:
     privileges: dict[int, dict] = {}
-    async for member in bot.get_chat_members(chat_id, filter=ChatMembersFilter.ADMINISTRATORS):
-        if not member.user:
-            continue
-        if member.status != ChatMemberStatus.OWNER and member.privileges:
-            privileges[member.user.id] = {
-                _attr: getattr(member.privileges, _attr, False)
-                for _attr in _PRIVILEGE_ATTRS
-            }
-        else:
-            privileges[member.user.id] = {_attr: True for _attr in _PRIVILEGE_ATTRS}
+    try:
+        async for member in bot.get_chat_members(chat_id, filter=ChatMembersFilter.ADMINISTRATORS):
+            if not member.user:
+                continue
+            if member.status == ChatMemberStatus.OWNER:
+                privileges[member.user.id] = {_attr: True for _attr in _PRIVILEGE_ATTRS}
+                continue
+            if member.status == ChatMemberStatus.ADMINISTRATOR:
+                if getattr(member, 'privileges', None):
+                    privileges[member.user.id] = {
+                        _attr: getattr(member.privileges, _attr, False)
+                        for _attr in _PRIVILEGE_ATTRS
+                    }
+                else:
+                    privileges[member.user.id] = {_attr: True for _attr in _PRIVILEGE_ATTRS}
+                continue
+            # skip regular members
+    except Exception:
+        # fallback: fetch all members for basic groups
+        try:
+            async for member in bot.get_chat_members(chat_id):
+                if not member.user:
+                    continue
+                if member.status == ChatMemberStatus.OWNER:
+                    privileges[member.user.id] = {_attr: True for _attr in _PRIVILEGE_ATTRS}
+                    continue
+                if member.status == ChatMemberStatus.ADMINISTRATOR:
+                    if getattr(member, 'privileges', None):
+                        privileges[member.user.id] = {
+                            _attr: getattr(member.privileges, _attr, False)
+                            for _attr in _PRIVILEGE_ATTRS
+                        }
+                    else:
+                        privileges[member.user.id] = {_attr: True for _attr in _PRIVILEGE_ATTRS}
+                    continue
+        except Exception:
+            log.exception('refresh_admins failed for chat %s', chat_id)
+            raise
     mapping = {str(user_id): json.dumps(flags) for user_id, flags in privileges.items()}
     async with database.pipeline() as pipe:
+        pipe.delete(f'{bot.me.id}:group:{chat_id}:admins')
         if mapping:
             pipe.hset(f'{bot.me.id}:group:{chat_id}:admins', mapping=mapping)
         pipe.delete(f'{bot.me.id}:group:{chat_id}:admin')
+        await pipe.execute()
 
 
 async def _has_perm(chat_id: int, user_id: int, permission: str) -> bool:
     if user_id in DEV_ADMINS.values():
         return True
     raw = await database.hget(f'{bot.me.id}:group:{chat_id}:admins', str(user_id))
-    if raw is None:
-        return False
+    if raw is not None:
+        try:
+            return bool(json.loads(raw).get(permission))
+        except json.JSONDecodeError:
+            pass
     try:
-        return bool(json.loads(raw).get(permission))
-    except json.JSONDecodeError:
-        return False
+        member = await bot.get_chat_member(chat_id, user_id)
+        if not member or not member.user:
+            return False
+        if member.status == ChatMemberStatus.OWNER:
+            return True
+        if member.status == ChatMemberStatus.ADMINISTRATOR:
+            privs = getattr(member, 'privileges', None)
+            if privs is None:
+                return True
+            return bool(getattr(privs, permission, False))
+    except Exception:
+        log.exception('fallback permission check failed for %s in %s', user_id, chat_id)
+    return False
 
 
 def require_access(command: str):

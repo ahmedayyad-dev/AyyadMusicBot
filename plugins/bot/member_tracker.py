@@ -27,6 +27,15 @@ async def _bot_left_filter(flt, _, update: ChatMemberUpdated) -> bool:
 bot_left_group = filters.create(_bot_left_filter, 'BotLeftGroup')
 
 
+def _is_admin(member) -> bool:
+    if not member or not getattr(member, 'user', None):
+        return False
+    return member.status in (
+        ChatMemberStatus.OWNER,
+        ChatMemberStatus.ADMINISTRATOR,
+    )
+
+
 @Client.on_message(group=-1)
 async def member_handler(client: Client, update: Message) -> None:
     if update.chat.id < 0:
@@ -39,6 +48,28 @@ async def member_handler(client: Client, update: Message) -> None:
             await bot.send_rich_message(update.chat.id, build_welcome())
     else:
         await database.sadd(f'{bot.me.id}:private', update.chat.id)
+
+
+@Client.on_chat_member_updated(filters.group | filters.channel)
+async def track_admin_changes(client: Client, update: ChatMemberUpdated) -> None:
+    old = update.old_chat_member
+    new = update.new_chat_member
+    if not old or not new:
+        return
+    if _is_admin(old) != _is_admin(new):
+        try:
+            await refresh_admins(update.chat.id)
+        except Exception:
+            log.exception('failed to refresh admins after member update in %s', update.chat.id)
+        return
+    if _is_admin(new):
+        old_privs = getattr(old, 'privileges', None)
+        new_privs = getattr(new, 'privileges', None)
+        if old_privs != new_privs:
+            try:
+                await refresh_admins(update.chat.id)
+            except Exception:
+                log.exception('failed to refresh admins after privilege update in %s', update.chat.id)
 
 
 @Client.on_chat_member_updated(bot_left_group & (filters.group | filters.channel))
