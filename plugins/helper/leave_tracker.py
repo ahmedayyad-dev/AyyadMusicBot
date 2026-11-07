@@ -27,6 +27,9 @@ helper_left = filters.create(_helper_left_filter, 'HelperLeft')
 @Client.on_chat_member_updated(helper_left & (filters.group | filters.channel))
 async def handle_helper_leave(client: Client, update: ChatMemberUpdated) -> None:
     log.info('helper left chat %s', update.chat.id)
-    with suppress(ValueError):
-        client.chats.remove(update.chat.id)
+    if hasattr(client.chats, 'discard'):
+        client.chats.discard(update.chat.id)
+    else:
+        with suppress(ValueError):
+            client.chats.remove(update.chat.id)
     chat_owner.pop(update.chat.id, None)

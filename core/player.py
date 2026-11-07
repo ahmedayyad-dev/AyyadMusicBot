@@ -11,6 +11,7 @@ class QueueItem:
     track: Track
     requested_by: int
     autoplay: bool = False
+    query: str | None = None
 
 
 @dataclass(slots=True)
@@ -18,6 +19,7 @@ class ChatPlayback:
     queue: deque[QueueItem] = field(default_factory=deque)
     autoplay: deque[Track] = field(default_factory=deque)
     autoplay_seed: str | None = None
+    autoplay_query: str | None = None
     current: QueueItem | None = None
     paused: bool = False
     message_id: int | None = None
@@ -26,12 +28,15 @@ class ChatPlayback:
     def is_playing(self) -> bool:
         return self.current is not None
 
-    def enqueue(self, track: Track, requested_by: int, limit: int) -> tuple[bool, int]:
+    def enqueue(
+        self, track: Track, requested_by: int, limit: int, query: str | None = None
+    ) -> tuple[bool, int]:
         if len(self.queue) >= limit:
             return False, len(self.queue)
         self.autoplay.clear()
         self.autoplay_seed = None
-        self.queue.append(QueueItem(track=track, requested_by=requested_by))
+        self.autoplay_query = None
+        self.queue.append(QueueItem(track=track, requested_by=requested_by, query=query))
         return True, len(self.queue)
 
     def set_current(self, item: QueueItem | None) -> None:
@@ -54,11 +59,14 @@ class ChatPlayback:
         self.paused = False
         return self.current
 
-    def set_autoplay(self, tracks: list[Track], seed_id: str | None = None) -> None:
+    def set_autoplay(
+        self, tracks: list[Track], seed_id: str | None = None, query: str | None = None
+    ) -> None:
         if seed_id is None:
             seed_id = self.last_manual_seed()
         self.autoplay.clear()
         self.autoplay_seed = seed_id
+        self.autoplay_query = query
         seen = {seed_id} if seed_id else set()
         for track in tracks:
             if track.id in seen:
@@ -73,14 +81,24 @@ class ChatPlayback:
             return self.current.track.id
         return None
 
+    def last_manual_query(self) -> str | None:
+        if self.queue:
+            return self.queue[-1].query
+        if self.current is not None and not self.current.autoplay:
+            return self.current.query
+        return None
+
     def clear_autoplay(self) -> None:
         self.autoplay.clear()
         self.autoplay_seed = None
+        self.autoplay_query = None
 
     def next_autoplay(self) -> QueueItem | None:
         if not self.autoplay:
             return None
-        item = QueueItem(track=self.autoplay.popleft(), requested_by=0, autoplay=True)
+        item = QueueItem(
+            track=self.autoplay.popleft(), requested_by=0, autoplay=True, query=self.autoplay_query
+        )
         self.current = item
         self.paused = False
         return item
@@ -95,7 +113,8 @@ class ChatPlayback:
     def queue_snapshot(self) -> tuple[QueueItem | None, list[QueueItem]]:
         upcoming = list(self.queue)
         upcoming.extend(
-            QueueItem(track=track, requested_by=0, autoplay=True) for track in self.autoplay
+            QueueItem(track=track, requested_by=0, autoplay=True, query=self.autoplay_query)
+            for track in self.autoplay
         )
         return self.current, upcoming
 
@@ -146,12 +165,18 @@ def advance(chat_id: int) -> QueueItem | None:
     return player_manager.get(chat_id).advance()
 
 
-def set_autoplay(chat_id: int, tracks: list[Track], seed_id: str | None = None) -> None:
-    player_manager.get(chat_id).set_autoplay(tracks, seed_id)
+def set_autoplay(
+    chat_id: int, tracks: list[Track], seed_id: str | None = None, query: str | None = None
+) -> None:
+    player_manager.get(chat_id).set_autoplay(tracks, seed_id, query)
 
 
 def last_manual_seed(chat_id: int) -> str | None:
     return player_manager.get(chat_id).last_manual_seed()
+
+
+def last_manual_query(chat_id: int) -> str | None:
+    return player_manager.get(chat_id).last_manual_query()
 
 
 def clear_autoplay(chat_id: int) -> None:

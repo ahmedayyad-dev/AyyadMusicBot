@@ -74,7 +74,13 @@ class AssistantManager:
         self.chat_owner: dict[int, int] = {}
 
     def _pick_helper(self) -> int:
-        return min(range(len(self.helpers)), key=lambda _idx: len(self.helpers[_idx].mtproto_client.chats))
+        return min(
+            range(len(self.helpers)),
+            key=lambda _idx: (
+                sum(1 for _o in self.chat_owner.values() if _o == _idx),
+                len(self.helpers[_idx].mtproto_client.chats),
+            ),
+        )
 
     async def _ensure_join(self, call: PyTgCalls, chat_id: int) -> str | None:
         chat = await bot.get_chat(chat_id)
@@ -94,7 +100,9 @@ class AssistantManager:
             return 'invite link expired'
         except (ChannelPrivate, ChannelInvalid, ChatIdInvalid):
             return 'helper cannot join this group'
-        if chat.id not in call.mtproto_client.chats:
+        if hasattr(call.mtproto_client.chats, 'add'):
+            call.mtproto_client.chats.add(chat.id)
+        elif chat.id not in call.mtproto_client.chats:
             call.mtproto_client.chats.append(chat.id)
         await mirror_bot_privileges(chat.id, call.mtproto_client.me.id)
         return None
@@ -157,8 +165,11 @@ class AssistantManager:
         if leave_chat:
             with suppress(RPCError):
                 await self.helpers[idx].mtproto_client.leave_chat(chat_id)
-            with suppress(ValueError):
-                self.helpers[idx].mtproto_client.chats.remove(chat_id)
+            if hasattr(self.helpers[idx].mtproto_client.chats, 'discard'):
+                self.helpers[idx].mtproto_client.chats.discard(chat_id)
+            else:
+                with suppress(ValueError):
+                    self.helpers[idx].mtproto_client.chats.remove(chat_id)
             self.chat_owner.pop(chat_id, None)
         log.info('helper left call - chat %s', chat_id)
 
@@ -170,6 +181,14 @@ class AssistantManager:
             f'{bot.me.id}:group:{chat_id}:anghami_queue', 'on' if enabled else 'off'
         )
 
+    async def autoplay_mode(self, chat_id: int) -> str:
+        mode = await database.get(f'{bot.me.id}:group:{chat_id}:autoplay_mode')
+        return mode if mode in ('song', 'search') else 'search'
+
+    async def set_autoplay_mode(self, chat_id: int, mode: str) -> None:
+        if mode in ('song', 'search'):
+            await database.set(f'{bot.me.id}:group:{chat_id}:autoplay_mode', mode)
+
     async def _load_autoplay(self, chat_id: int) -> None:
         if not await self.anghami_queue_enabled(chat_id):
             return
@@ -179,14 +198,29 @@ class AssistantManager:
         playback = player.get_playback(chat_id)
         if playback.autoplay_seed == seed_id and playback.autoplay:
             return
+        active_query = (
+            player.last_manual_query(chat_id)
+            if (await self.autoplay_mode(chat_id)) == 'search'
+            else None
+        )
         try:
-            tracks = await anghami.queue_tracks(seed_id)
+            if active_query:
+                tracks = [
+                    _t
+                    for _t in await anghami.search(active_query, limit=15)
+                    if _t.id != seed_id
+                ]
+                if not tracks:
+                    active_query = None
+                    tracks = await anghami.queue_tracks(seed_id)
+            else:
+                tracks = await anghami.queue_tracks(seed_id)
         except (anghami.AnghamiError, RedisError) as exc:
             log.warning('failed loading anghami queue in chat %s: %s', chat_id, exc)
             return
         if not tracks or player.last_manual_seed(chat_id) != seed_id:
             return
-        player.set_autoplay(chat_id, tracks, seed_id)
+        player.set_autoplay(chat_id, tracks, seed_id, active_query)
 
     async def prepare_next(self, chat_id: int) -> None:
         await self._load_autoplay(chat_id)
@@ -194,7 +228,10 @@ class AssistantManager:
         if next_track is None:
             return
         try:
-            await anghami.stream_url(next_track.id)
+            await asyncio.gather(
+                anghami.stream_url(next_track.id),
+                anghami.cover_file(next_track.cover_id),
+            )
         except (anghami.AnghamiError, RedisError) as exc:
             log.warning('failed prefetching next track in chat %s: %s', chat_id, exc)
 
@@ -210,7 +247,11 @@ class AssistantManager:
                 player.close(chat_id)
                 return None
             try:
-                await self.play_stream(chat_id, await anghami.stream_url(item.track.id))
+                stream_url, _ = await asyncio.gather(
+                    anghami.stream_url(item.track.id),
+                    anghami.cover_file(item.track.cover_id),
+                )
+                await self.play_stream(chat_id, stream_url)
             except (
                 anghami.AnghamiError,
                 CallUnavailable,
@@ -236,8 +277,11 @@ class AssistantManager:
             await client.leave_chat(chat_id)
         except RPCError:
             return
-        with suppress(ValueError):
-            client.chats.remove(chat_id)
+        if hasattr(client.chats, 'discard'):
+            client.chats.discard(chat_id)
+        else:
+            with suppress(ValueError):
+                client.chats.remove(chat_id)
 
     async def _sweep_idle(self, client: Client) -> None:
         for chat_id in list(client.chats):
@@ -269,7 +313,7 @@ class AssistantManager:
                 fetch_stickers=False,
                 plugins=dict(root='plugins/helper'),
             )
-            client.chats = []
+            client.chats = set()
             call = PyTgCalls(client)
             client.call = call
             call.add_handler(self._on_stream_end, filters.stream_end(StreamEnded.Type.AUDIO))
@@ -277,7 +321,7 @@ class AssistantManager:
             await call.start()
             async for dialog in client.get_dialogs():
                 if dialog.chat.type in {ChatType.SUPERGROUP, ChatType.CHANNEL, ChatType.GROUP}:
-                    client.chats.append(dialog.chat.id)
+                    client.chats.add(dialog.chat.id)
             self.helpers.append(call)
             log.info('helper %s started - member of %s chats', idx, len(client.chats))
             asyncio.create_task(self._sweep_loop(client))
@@ -301,6 +345,8 @@ resume_call = assistant_manager.resume_call
 leave_call = assistant_manager.leave_call
 anghami_queue_enabled = assistant_manager.anghami_queue_enabled
 set_anghami_queue = assistant_manager.set_anghami_queue
+autoplay_mode = assistant_manager.autoplay_mode
+set_autoplay_mode = assistant_manager.set_autoplay_mode
 prepare_next = assistant_manager.prepare_next
 play_next = assistant_manager.play_next
 start_helpers = assistant_manager.start_helpers

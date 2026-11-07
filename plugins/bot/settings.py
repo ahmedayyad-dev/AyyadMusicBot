@@ -22,6 +22,7 @@ async def panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         for command in COMMANDS:
             pipe.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
         pipe.get(f'{bot.me.id}:group:{chat_id}:anghami_queue')
+        pipe.get(f'{bot.me.id}:group:{chat_id}:autoplay_mode')
         pipe.get(f'{bot.me.id}:group:{chat_id}:lang')
         results = await pipe.execute()
     raw_lang = results[-1]
@@ -51,10 +52,22 @@ async def panel_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=(
                     f"{text(chat_lang, 'setting_anghami_queue')}: "
-                    f"{text(chat_lang, 'anghami_queue_on' if results[-2] != 'off' else 'anghami_queue_off')}"
+                    f"{text(chat_lang, 'anghami_queue_on' if results[-3] != 'off' else 'anghami_queue_off')}"
                 ),
                 callback_data='toggle:anghami_queue',
-                style=ButtonStyle.SUCCESS if results[-2] != 'off' else ButtonStyle.DANGER,
+                style=ButtonStyle.SUCCESS if results[-3] != 'off' else ButtonStyle.DANGER,
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=(
+                    f"{text(chat_lang, 'setting_autoplay_mode')}: "
+                    f"{text(chat_lang, 'autoplay_mode_song' if results[-2] == 'song' else 'autoplay_mode_search')}"
+                ),
+                callback_data='toggle:autoplay_mode',
+                style=ButtonStyle.PRIMARY,
             )
         ]
     )
@@ -107,6 +120,19 @@ async def toggle_anghami_queue(client: Client, query: CallbackQuery, lang: str) 
     await helper.set_anghami_queue(chat_id, not enabled)
     if enabled:
         player.clear_autoplay(chat_id)
+    await query.answer(text(lang, 'settings_saved'))
+    await query.message.edit_text(
+        text(lang, 'settings_body'), reply_markup=await panel_keyboard(chat_id)
+    )
+
+
+@Client.on_callback_query(filters.regex(r'^toggle:autoplay_mode$'))
+@require_admin()
+async def toggle_autoplay_mode(client: Client, query: CallbackQuery, lang: str) -> None:
+    chat_id = query.message.chat.id
+    await helper.set_autoplay_mode(
+        chat_id, 'song' if (await helper.autoplay_mode(chat_id)) == 'search' else 'search'
+    )
     await query.answer(text(lang, 'settings_saved'))
     await query.message.edit_text(
         text(lang, 'settings_body'), reply_markup=await panel_keyboard(chat_id)

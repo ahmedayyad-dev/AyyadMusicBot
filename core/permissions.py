@@ -45,9 +45,13 @@ _PRIVILEGE_ATTRS = (
 )
 
 
+_SCOPE_CACHE: dict[tuple[int, str], str] = {}
+
+
 async def set_command_scope(chat_id: int, command: str, scope: str | CommandScope) -> None:
     if scope not in (CommandScope.ALL, CommandScope.ADMINS):
         raise ValueError(f'unknown scope {scope}')
+    _SCOPE_CACHE[(chat_id, command)] = str(scope)
     await database.set(f'{bot.me.id}:group:{chat_id}:perm:{command}', str(scope))
 
 
@@ -70,9 +74,15 @@ async def ensure_access(update: Message | CallbackQuery, command: str) -> bool:
     chat_id, user_id = _target(update)
     if user_id in DEV_ADMINS.values():
         return True
-    scope = await database.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
-    if scope == CommandScope.ALL:
+    cached_scope = _SCOPE_CACHE.get((chat_id, command))
+    if cached_scope == CommandScope.ALL:
         return True
+    if cached_scope is None:
+        scope = await database.get(f'{bot.me.id}:group:{chat_id}:perm:{command}')
+        if scope:
+            _SCOPE_CACHE[(chat_id, command)] = scope
+            if scope == CommandScope.ALL:
+                return True
     raw = await database.hget(f'{bot.me.id}:group:{chat_id}:admins', str(user_id))
     if raw is not None:
         try:

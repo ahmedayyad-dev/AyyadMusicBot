@@ -36,18 +36,25 @@ def _is_admin(member) -> bool:
     )
 
 
+_KNOWN_CHATS: set[int] = set()
+
+
 @Client.on_message(group=-1)
 async def member_handler(client: Client, update: Message) -> None:
-    if update.chat.id < 0:
+    chat_id = update.chat.id
+    if chat_id in _KNOWN_CHATS:
+        return
+    _KNOWN_CHATS.add(chat_id)
+    if chat_id < 0:
         if update.chat.type == ChatType.CHANNEL:
-            if await database.sadd(f'{bot.me.id}:channel', update.chat.id):
-                log.info('bot added to channel - %s', update.chat.id)
-        elif await database.sadd(f'{bot.me.id}:group', update.chat.id):
-            log.info('bot joined group - %s', update.chat.id)
-            await refresh_admins(update.chat.id)
-            await bot.send_rich_message(update.chat.id, build_welcome())
+            if await database.sadd(f'{bot.me.id}:channel', chat_id):
+                log.info('bot added to channel - %s', chat_id)
+        elif await database.sadd(f'{bot.me.id}:group', chat_id):
+            log.info('bot joined group - %s', chat_id)
+            await refresh_admins(chat_id)
+            await bot.send_rich_message(chat_id, build_welcome())
     else:
-        await database.sadd(f'{bot.me.id}:private', update.chat.id)
+        await database.sadd(f'{bot.me.id}:private', chat_id)
 
 
 @Client.on_chat_member_updated(filters.group | filters.channel)
@@ -63,9 +70,7 @@ async def track_admin_changes(client: Client, update: ChatMemberUpdated) -> None
             log.exception('failed to refresh admins after member update in %s', update.chat.id)
         return
     if _is_admin(new):
-        old_privs = getattr(old, 'privileges', None)
-        new_privs = getattr(new, 'privileges', None)
-        if old_privs != new_privs:
+        if getattr(old, 'privileges', None) != getattr(new, 'privileges', None):
             try:
                 await refresh_admins(update.chat.id)
             except Exception:
@@ -80,5 +85,6 @@ async def leave_handler(client: Client, update: ChatMemberUpdated) -> None:
         pipe.srem(f'{bot.me.id}:{kind}', update.chat.id)
         pipe.delete(f'{bot.me.id}:group:{update.chat.id}:admins')
         await pipe.execute()
+    _KNOWN_CHATS.discard(update.chat.id)
     await leave_call(update.chat.id, leave_chat=True)
     await bot.leave_chat(update.chat.id)

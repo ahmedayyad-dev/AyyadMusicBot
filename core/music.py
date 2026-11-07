@@ -1,9 +1,11 @@
 # pylint: disable=C0114
+import asyncio
+import json
 import logging
 import secrets
 from contextlib import suppress
 
-from pyrogram.enums import ChatType
+from pyrogram.enums import ChatAction, ChatType
 from pyrogram.errors import RPCError
 from pyrogram.types import InputRichBlockParagraph, InputRichMessage, Message, ReplyParameters
 
@@ -72,11 +74,6 @@ async def _search(status: Message, query: str, lang: str | None = None) -> angha
     return tracks[0]
 
 
-async def _play(chat_id: int, stream_url: str, status: Message, lang: str | None = None) -> None:
-    await _set_status(status, 'status_playing', lang=lang)
-    await helper.play_stream(chat_id, stream_url)
-
-
 async def start_play(message: Message, query: str, lang: str | None = None) -> None:
     chosen_lang = lang if lang is not None else await get_language(message.chat.id)
     status = await _send_status(message.chat.id, 'status_searching', message.id, chosen_lang)
@@ -84,10 +81,13 @@ async def start_play(message: Message, query: str, lang: str | None = None) -> N
     if track is None:
         return
     chat_id = message.chat.id
+    search_query = None if anghami.song_id_from_link(query) else query.strip()
     async with player.player_manager.lock_for(chat_id):
         playback = player.get_playback(chat_id)
         if playback.is_playing:
-            queued, position = playback.enqueue(track, message.from_user.id, QUEUE_LIMIT)
+            queued, position = playback.enqueue(
+                track, message.from_user.id, QUEUE_LIMIT, query=search_query
+            )
             if not queued:
                 await _set_status(status, 'queue_full', chosen_lang, limit=QUEUE_LIMIT)
                 return
@@ -96,10 +96,19 @@ async def start_play(message: Message, query: str, lang: str | None = None) -> N
             )
             await helper.prepare_next(chat_id)
             return
-        item = player.QueueItem(track=track, requested_by=message.from_user.id)
+        item = player.QueueItem(
+            track=track, requested_by=message.from_user.id, query=search_query
+        )
         try:
-            await _set_status(status, 'status_loading', chosen_lang)
-            await _play(chat_id, await anghami.stream_url(track.id), status, chosen_lang)
+            _, (stream_url, _) = await asyncio.gather(
+                _set_status(status, 'status_loading', chosen_lang),
+                asyncio.gather(
+                    anghami.stream_url(track.id),
+                    anghami.cover_file(track.cover_id),
+                ),
+            )
+            await _set_status(status, 'status_playing', chosen_lang)
+            await helper.play_stream(chat_id, stream_url)
             playback.set_current(item)
         except helper.NoHelperAvailable:
             player.close(chat_id)
@@ -184,51 +193,95 @@ async def show_queue(message: Message, lang: str | None = None) -> None:
     await nowplaying.send_queue(message.chat.id, current, upcoming, 0, lang)
 
 
-async def _upload(status: Message, chat_id: int, stream_url: str, track: anghami.Track) -> None:
-    await _set_status(status, 'status_loading')
+async def _upload(
+    status: Message,
+    chat_id: int,
+    stream_url: str,
+    track: anghami.Track,
+    lang: str | None = None,
+) -> None:
     try:
         await bot.edit_message_text(
-            chat_id, status.id, rich_message=await nowplaying.build_audio(track, stream_url)
+            chat_id,
+            status.id,
+            rich_message=await nowplaying.build_audio(
+                track, stream_url, lang if lang is not None else await get_language(chat_id)
+            ),
         )
     except RPCError as exc:
         log.warning('failed editing audio into status in chat %s: %s', chat_id, exc)
-        await bot.send_audio(chat_id, stream_url, caption=nowplaying.track_line(track))
+        await bot.send_audio(
+            chat_id,
+            stream_url,
+            caption=nowplaying.track_line(track),
+            duration=int(track.duration),
+            performer=track.artist,
+            title=track.title,
+        )
         await _clear_status(status)
 
 
-async def _deliver(status: Message, chat_id: int, track: anghami.Track) -> None:
-    await _set_status(status, 'status_loading')
+async def _deliver(
+    status: Message, chat_id: int, track: anghami.Track, lang: str | None = None
+) -> None:
+    with suppress(RPCError):
+        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_AUDIO)
     try:
-        await _upload(status, chat_id, await anghami.stream_url(track.id), track)
+        _, (stream_url, _) = await asyncio.gather(
+            _set_status(status, 'status_loading', lang),
+            asyncio.gather(
+                anghami.stream_url(track.id),
+                anghami.cover_file(track.cover_id),
+            ),
+        )
+        await _upload(status, chat_id, stream_url, track, lang)
     except anghami.AnghamiError:
-        await _set_status(status, 'load_failed')
+        await _set_status(status, 'load_failed', lang)
 
 
 async def handle_download(message: Message, query: str, lang: str | None = None) -> None:
-    status = await _send_status(message.chat.id, 'status_searching', message.id, lang)
-    track = await _search(status, query, lang)
+    chosen_lang = lang if lang is not None else await get_language(message.chat.id)
+    status = await _send_status(message.chat.id, 'status_searching', message.id, chosen_lang)
+    track = await _search(status, query, chosen_lang)
     if track is None:
         return
     if message.chat.type == ChatType.PRIVATE:
-        await _deliver(status, message.chat.id, track)
+        await _deliver(status, message.chat.id, track, chosen_lang)
         return
     token = secrets.token_urlsafe(8)
-    await database.set(f'{bot.me.id}:dl:{token}', track.id, ex=DOWNLOAD_TOKEN_TTL)
+    await database.set(
+        f'{bot.me.id}:dl:{token}', json.dumps(track.to_dict()), ex=DOWNLOAD_TOKEN_TTL
+    )
+    asyncio.create_task(
+        asyncio.gather(
+            anghami.stream_url(track.id),
+            anghami.cover_file(track.cover_id),
+            return_exceptions=True,
+        )
+    )
     await nowplaying.send_download_prompt(
         status, track, f'https://t.me/{bot.me.username}?start=dl_{token}'
     )
 
 
 async def open_download(chat_id: int, token: str) -> None:
-    status = await _send_status(chat_id, 'status_searching')
+    chosen_lang = await get_language(chat_id)
+    status = await _send_status(chat_id, 'status_loading', lang=chosen_lang)
     async with database.pipeline() as pipe:
         pipe.get(f'{bot.me.id}:dl:{token}')
         pipe.delete(f'{bot.me.id}:dl:{token}')
-        track_id, _ = await pipe.execute()
-    if track_id is None:
-        await _set_status(status, 'download_expired')
+        payload, _ = await pipe.execute()
+    if payload is None:
+        await _set_status(status, 'download_expired', chosen_lang)
         return
     try:
-        await _deliver(status, chat_id, await anghami.track_info(track_id))
+        await _deliver(
+            status,
+            chat_id,
+            anghami.Track.from_dict(json.loads(payload))
+            if payload.startswith('{')
+            else await anghami.track_info(payload),
+            chosen_lang,
+        )
     except anghami.AnghamiError:
-        await _set_status(status, 'load_failed')
+        await _set_status(status, 'load_failed', chosen_lang)

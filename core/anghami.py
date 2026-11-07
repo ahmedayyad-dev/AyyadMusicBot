@@ -150,16 +150,35 @@ def _url_ttl(url: str) -> int:
 
 
 class AnghamiClient:
-    __slots__ = ('_cache_cap', '_cover_cache')
+    __slots__ = ('_cache_cap', '_cover_cache', '_session', '_track_cache')
 
     def __init__(self, cache_cap: int = 128) -> None:
         self._cover_cache: dict[int, bytes] = {}
+        self._track_cache: dict[str, Track] = {}
         self._cache_cap = cache_cap
+        self._session: aiohttp.ClientSession | None = None
+
+    def _cache_track(self, track: Track) -> None:
+        if len(self._track_cache) >= self._cache_cap:
+            self._track_cache.pop(next(iter(self._track_cache)))
+        self._track_cache[track.id] = track
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    limit=100, keepalive_timeout=60, enable_cleanup_closed=True
+                )
+            )
+        return self._session
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
 
     async def _get(self, path: str, params: dict | None = None) -> dict | None:
         try:
-            async with aiohttp.request(
-                'GET',
+            async with self._get_session().get(
                 f'https://{RAPIDAPI_HOST}{path}',
                 params=params,
                 headers={'x-rapidapi-key': RAPIDAPI_KEY, 'x-rapidapi-host': RAPIDAPI_HOST},
@@ -179,8 +198,7 @@ class AnghamiClient:
 
     async def _download_cover(self, cover_id: int) -> bytes | None:
         try:
-            async with aiohttp.request(
-                'GET',
+            async with self._get_session().get(
                 f'https://artwork.anghcdn.co/?id={cover_id}&size=640',
                 headers={'Accept': 'image/jpeg'},
                 timeout=aiohttp.ClientTimeout(total=15),
@@ -188,9 +206,7 @@ class AnghamiClient:
                 if response.status != 200:
                     return None
                 return await response.read()
-        except aiohttp.ClientError:
-            return None
-        except TimeoutError:
+        except (aiohttp.ClientError, TimeoutError):
             return None
 
     async def cover_file(self, cover_id: int) -> io.BytesIO | None:
@@ -221,7 +237,10 @@ class AnghamiClient:
                 await database.delete(f'anghami:search:{clean_query.lower()}')
                 cached = None
             if cached is not None:
-                return [Track.from_dict(item) for item in cached][:limit]
+                cached_tracks = [Track.from_dict(item) for item in cached]
+                for track in cached_tracks:
+                    self._cache_track(track)
+                return cached_tracks[:limit]
 
         tracks = [
             Track.from_dict(item)
@@ -230,19 +249,33 @@ class AnghamiClient:
             ).get('results') or []
             if item.get('id')
         ]
-        await database.set(
-            f'anghami:search:{clean_query.lower()}',
-            json.dumps([track.to_dict() for track in tracks]),
-            ex=SEARCH_CACHE_TTL,
-        )
+        async with database.pipeline() as pipe:
+            pipe.set(
+                f'anghami:search:{clean_query.lower()}',
+                json.dumps([track.to_dict() for track in tracks]),
+                ex=SEARCH_CACHE_TTL,
+            )
+            for track in tracks:
+                self._cache_track(track)
+                pipe.set(
+                    f'anghami:track:{track.id}',
+                    json.dumps(track.to_dict()),
+                    ex=TRACK_CACHE_TTL,
+                )
+            await pipe.execute()
         return tracks[: max(1, min(limit, SEARCH_MAX_RESULTS))]
 
     async def track_info(self, song_id: str) -> Track:
+        cached_mem = self._track_cache.get(song_id)
+        if cached_mem is not None:
+            return cached_mem
         log.info('anghami track info - id %s', song_id)
         raw = await database.get(f'anghami:track:{song_id}')
         if raw is not None:
             try:
-                return Track(**json.loads(raw))
+                track = Track(**json.loads(raw))
+                self._cache_track(track)
+                return track
             except json.JSONDecodeError:
                 await database.delete(f'anghami:track:{song_id}')
 
@@ -250,6 +283,7 @@ class AnghamiClient:
         if not payload:
             raise AnghamiNotFound(f'song {song_id} not found')
         track = Track.from_dict(payload)
+        self._cache_track(track)
         await database.set(
             f'anghami:track:{song_id}', json.dumps(track.to_dict()), ex=TRACK_CACHE_TTL
         )
@@ -303,3 +337,4 @@ queue_tracks = anghami_client.queue_tracks
 stream_url = anghami_client.stream_url
 cover_file = anghami_client.cover_file
 invalidate_url = anghami_client.invalidate_url
+close = anghami_client.close

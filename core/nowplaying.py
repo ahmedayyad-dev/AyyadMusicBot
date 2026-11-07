@@ -195,7 +195,14 @@ def _build_queue(
                 )
                 if item.autoplay:
                     blocks.append(
-                        InputRichBlockParagraph(text=text(lang, 'queue_anghami_note'))
+                        InputRichBlockParagraph(
+                            text=text(
+                                lang,
+                                'queue_anghami_note_search'
+                                if item.query
+                                else 'queue_anghami_note_song',
+                            )
+                        )
                     )
                 shown_sources.add(item.autoplay)
             blocks.append(InputRichBlockParagraph(text=f'{position}. {track_line(item.track)}'))
