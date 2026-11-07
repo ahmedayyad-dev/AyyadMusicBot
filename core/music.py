@@ -239,6 +239,14 @@ async def _deliver(
         await _set_status(status, 'load_failed', lang)
 
 
+async def _warm_cache(track: anghami.Track) -> None:
+    with suppress(Exception):
+        await asyncio.gather(
+            anghami.stream_url(track.id),
+            anghami.cover_file(track.cover_id),
+        )
+
+
 async def handle_download(message: Message, query: str, lang: str | None = None) -> None:
     chosen_lang = lang if lang is not None else await get_language(message.chat.id)
     status = await _send_status(message.chat.id, 'status_searching', message.id, chosen_lang)
@@ -252,13 +260,7 @@ async def handle_download(message: Message, query: str, lang: str | None = None)
     await database.set(
         f'{bot.me.id}:dl:{token}', json.dumps(track.to_dict()), ex=DOWNLOAD_TOKEN_TTL
     )
-    asyncio.create_task(
-        asyncio.gather(
-            anghami.stream_url(track.id),
-            anghami.cover_file(track.cover_id),
-            return_exceptions=True,
-        )
-    )
+    asyncio.create_task(_warm_cache(track))
     await nowplaying.send_download_prompt(
         status, track, f'https://t.me/{bot.me.username}?start=dl_{token}'
     )
